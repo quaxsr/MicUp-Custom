@@ -25,7 +25,7 @@
             android:multiprocess="false"
             android:enabled="true"
             android:exported="true"
-            android:permissions="moe.shizuku.manager.permission.API" />
+            android:permission="moe.shizuku.manager.permission.API" />
 
         <activity
             android:name=".MainActivity"
