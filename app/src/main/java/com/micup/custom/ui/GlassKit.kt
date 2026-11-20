@@ -333,13 +333,13 @@ fun StatusPill(text: String, active: Boolean, modifier: Modifier = Modifier) {
                 Modifier
                     .size(7.dp)
                     .clip(CircleShape)
-                    .background(if (active) Color.White else cs.onSurfaceVariant.copy(alpha = 0.6f))
+                    .background(if (active) cs.onPrimary else cs.onSurfaceVariant.copy(alpha = 0.6f))
             )
             Spacer(Modifier.width(6.dp))
             Text(
                 text,
                 style = MaterialTheme.typography.labelMedium,
-                color = if (active) Color.White else cs.onSurfaceVariant,
+                color = if (active) cs.onPrimary else cs.onSurfaceVariant,
                 fontWeight = FontWeight.SemiBold
             )
         }
@@ -377,7 +377,7 @@ fun PresetChip(
         Text(
             text,
             style = MaterialTheme.typography.titleSmall,
-            color = if (selected) Color.White else cs.onSurfaceVariant,
+            color = if (selected) cs.onPrimary else cs.onSurfaceVariant,
             fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
         )
     }
@@ -402,7 +402,7 @@ fun GlowButton(
                 scaleX = scale
                 scaleY = scale
             }
-            .shadow(14.dp, shape, clip = false, ambientColor = Color(0xFF7C5CE0), spotColor = Color(0xFFE58FB1))
+            .shadow(14.dp, shape, clip = false, ambientColor = Color(0xFFB89BD8), spotColor = Color(0xFFD8A2C8))
             .clip(shape)
             .background(if (enabled) container else SolidColor(Color.Gray.copy(alpha = 0.4f)))
             .clickable(enabled = enabled, interactionSource = interaction, indication = null, onClick = onClick)
@@ -411,7 +411,7 @@ fun GlowButton(
     ) {
         Text(
             text,
-            color = Color.White,
+            color = cs.onPrimary,
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.Bold
         )
@@ -477,7 +477,7 @@ fun <T> ChoiceRow(
                 Text(
                     label(option),
                     style = MaterialTheme.typography.labelLarge,
-                    color = if (isSelected) Color.White else cs.onSurfaceVariant,
+                    color = if (isSelected) cs.onPrimary else cs.onSurfaceVariant,
                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                     maxLines = 1
                 )

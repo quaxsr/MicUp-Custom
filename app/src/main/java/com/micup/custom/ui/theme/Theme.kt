@@ -27,63 +27,63 @@ import com.micup.custom.data.ThemeMode
 /** 当前界面材质，供玻璃组件自适应 */
 val LocalMaterialStyle = staticCompositionLocalOf { MaterialStyle.LIQUID_GLASS }
 
-// ————— 浅色：低饱和粉紫调 —————
+// ————— 浅色：莫兰迪粉紫调（强制固定，显式禁用动态取色，不随壁纸变色） —————
 private val LightColors = lightColorScheme(
-    primary = Color(0xFF8D5FA6),
-    onPrimary = Color(0xFFFFFFFF),
-    primaryContainer = Color(0xFFEFDCF6),
-    onPrimaryContainer = Color(0xFF311B3D),
-    secondary = Color(0xFFB36E8F),
-    onSecondary = Color(0xFFFFFFFF),
-    secondaryContainer = Color(0xFFFADEEC),
-    onSecondaryContainer = Color(0xFF3A1F2E),
-    tertiary = Color(0xFF6E8CB8),
-    onTertiary = Color(0xFFFFFFFF),
-    tertiaryContainer = Color(0xFFDCE7F9),
-    onTertiaryContainer = Color(0xFF1C3149),
-    background = Color(0xFFFAF6FB),
-    onBackground = Color(0xFF37303F),
-    surface = Color(0xFFFDFAFE),
-    onSurface = Color(0xFF37303F),
-    surfaceVariant = Color(0xFFF0E7F3),
-    onSurfaceVariant = Color(0xFF675C70),
-    outline = Color(0xFFB9ABC1),
+    primary = Color(0xFFF8C8DC),        // 选中状态：柔和粉
+    onPrimary = Color(0xFF4A3241),      // 浅粉底上用深玫瑰灰保证对比度
+    primaryContainer = Color(0xFFFAD4E3),
+    onPrimaryContainer = Color(0xFF432B38),
+    secondary = Color(0xFFD9A2BE),      // 藕粉
+    onSecondary = Color(0xFF46283A),
+    secondaryContainer = Color(0xFFF3D7E3),
+    onSecondaryContainer = Color(0xFF402836),
+    tertiary = Color(0xFFB39BC9),       // 灰紫
+    onTertiary = Color(0xFF332743),
+    tertiaryContainer = Color(0xFFE6DCF0),
+    onTertiaryContainer = Color(0xFF2C2240),
+    background = Color(0xFFFDF5F7),     // 主背景：极浅柔粉
+    onBackground = Color(0xFF332D2F),   // 主文字：深灰褐（非纯黑）
+    surface = Color(0xFFFCE8ED),        // 卡片：浅藕粉
+    onSurface = Color(0xFF332D2F),
+    surfaceVariant = Color(0xFFF6DCE4),
+    onSurfaceVariant = Color(0xFF6E5E66),
+    outline = Color(0xFFC7B2BC),
     error = Color(0xFFB3261E),
     onError = Color(0xFFFFFFFF),
     errorContainer = Color(0xFFF9DAD6),
     onErrorContainer = Color(0xFF410E0B)
 )
 
-// ————— 深色：深蓝灰底 + 紫色点缀 —————
+// ————— 深色：深邃紫灰（冷调，去除暗红感） + 柔和醒目粉紫点缀 —————
 private val DarkColors = darkColorScheme(
-    primary = Color(0xFFBDA0F0),
-    onPrimary = Color(0xFF261145),
-    primaryContainer = Color(0xFF3D2A64),
-    onPrimaryContainer = Color(0xFFEBDFFF),
-    secondary = Color(0xFFDCAFCB),
-    onSecondary = Color(0xFF3B1F31),
-    secondaryContainer = Color(0xFF532F46),
-    onSecondaryContainer = Color(0xFFFADEEC),
-    tertiary = Color(0xFFA8C4F0),
-    onTertiary = Color(0xFF173252),
-    tertiaryContainer = Color(0xFF304968),
-    onTertiaryContainer = Color(0xFFD6E4FA),
-    background = Color(0xFF12151E),
-    onBackground = Color(0xFFE5E2EE),
-    surface = Color(0xFF181C27),
-    onSurface = Color(0xFFE5E2EE),
-    surfaceVariant = Color(0xFF242B3C),
-    onSurfaceVariant = Color(0xFFA9A4BD),
-    outline = Color(0xFF5B5675),
+    primary = Color(0xFFE3A6D8),        // 选中状态：柔和醒目粉紫
+    onPrimary = Color(0xFF3A1F3C),
+    primaryContainer = Color(0xFF4A2C50),
+    onPrimaryContainer = Color(0xFFF6D9EE),
+    secondary = Color(0xFFC79BD4),      // 粉紫
+    onSecondary = Color(0xFF33204A),
+    secondaryContainer = Color(0xFF442E52),
+    onSecondaryContainer = Color(0xFFF3DFF0),
+    tertiary = Color(0xFFA99AE0),       // 蓝紫
+    onTertiary = Color(0xFF2A2148),
+    tertiaryContainer = Color(0xFF3C3158),
+    onTertiaryContainer = Color(0xFFE2DBF5),
+    background = Color(0xFF171320),     // 主背景：深邃紫灰
+    onBackground = Color(0xFFEAE4EE),
+    surface = Color(0xFF1F1A28),        // 卡片：深紫灰
+    onSurface = Color(0xFFEAE4EE),
+    surfaceVariant = Color(0xFF2A2333),
+    onSurfaceVariant = Color(0xFFA89CB2),
+    outline = Color(0xFF574B62),
     error = Color(0xFFF2B8B5),
     onError = Color(0xFF601410),
     errorContainer = Color(0xFF8C1D18),
     onErrorContainer = Color(0xFFF9DAD6)
 )
 
-/** 氛围光斑（液态玻璃背景） */
-val LightAurora = listOf(Color(0xFFF6C6E2), Color(0xFFDCC3F4), Color(0xFFC6DCF6))
-val DarkAurora = listOf(Color(0xFF5B3F9E), Color(0xFF2F3F76), Color(0xFF7C3F86))
+/** 氛围光斑（液态玻璃背景）：浅色粉紫 / 深色冷调深紫 */
+val LightAurora = listOf(Color(0xFFF7C9DB), Color(0xFFE5C4EF), Color(0xFFF3CBE0))
+val DarkAurora = listOf(Color(0xFF523C86), Color(0xFF323468), Color(0xFF64418C))
 
 private val MicUpTypography = Typography(
     headlineMedium = TextStyle(fontWeight = FontWeight.Bold, fontSize = 26.sp, lineHeight = 32.sp, letterSpacing = (-0.3).sp),

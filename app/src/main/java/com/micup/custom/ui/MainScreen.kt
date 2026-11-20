@@ -214,12 +214,12 @@ private fun RowScope.SourceOption(
             .padding(vertical = 14.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Icon(icon, contentDescription = mode.label, tint = if (selected) Color.White else cs.onSurfaceVariant, modifier = Modifier.size(22.dp))
+        Icon(icon, contentDescription = mode.label, tint = if (selected) cs.onPrimary else cs.onSurfaceVariant, modifier = Modifier.size(22.dp))
         Spacer(Modifier.height(6.dp))
         Text(
             mode.label,
             style = MaterialTheme.typography.labelMedium,
-            color = if (selected) Color.White else cs.onSurface
+            color = if (selected) cs.onPrimary else cs.onSurface
         )
     }
 }
@@ -303,7 +303,7 @@ private fun EngineCard(
         GlowButton(
             text = if (running) "停止处理" else "开始处理",
             container = if (running) {
-                Brush.horizontalGradient(listOf(Color(0xFF5D6780), Color(0xFF3C4459)))
+                Brush.horizontalGradient(listOf(Color(0xFF6E6180), Color(0xFF4C4158)))
             } else {
                 Brush.horizontalGradient(listOf(cs.primary, cs.secondary))
             },

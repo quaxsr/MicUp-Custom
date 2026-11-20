@@ -62,8 +62,7 @@ data class MicUpSettings(
     val visualizerStyle: VisualizerStyle = VisualizerStyle.WAVEFORM,
     val bufferPreset: BufferPreset = BufferPreset.BALANCED,
     val rememberTuning: Boolean = true,
-    val keepScreenOn: Boolean = false,
-    val shizukuEnhance: Boolean = false
+    val keepScreenOn: Boolean = false
 )
 
 private val Context.dataStore by preferencesDataStore(name = "micup_settings")
@@ -82,7 +81,6 @@ object SettingsKeys {
     val BUFFER = stringPreferencesKey("buffer_preset")
     val REMEMBER_TUNING = booleanPreferencesKey("remember_tuning")
     val KEEP_SCREEN_ON = booleanPreferencesKey("keep_screen_on")
-    val SHIZUKU_ENHANCE = booleanPreferencesKey("shizuku_enhance")
 }
 
 /** DataStore 持久化仓库：所有设置项跨启动保存 */
@@ -105,8 +103,7 @@ class SettingsRepository(private val context: Context) {
             visualizerStyle = getEnum(SettingsKeys.VISUALIZER, d.visualizerStyle),
             bufferPreset = getEnum(SettingsKeys.BUFFER, d.bufferPreset),
             rememberTuning = this[SettingsKeys.REMEMBER_TUNING] ?: d.rememberTuning,
-            keepScreenOn = this[SettingsKeys.KEEP_SCREEN_ON] ?: d.keepScreenOn,
-            shizukuEnhance = this[SettingsKeys.SHIZUKU_ENHANCE] ?: d.shizukuEnhance
+            keepScreenOn = this[SettingsKeys.KEEP_SCREEN_ON] ?: d.keepScreenOn
         )
     }
 
@@ -128,7 +125,6 @@ class SettingsRepository(private val context: Context) {
             p[SettingsKeys.BUFFER] = s.bufferPreset.name
             p[SettingsKeys.REMEMBER_TUNING] = s.rememberTuning
             p[SettingsKeys.KEEP_SCREEN_ON] = s.keepScreenOn
-            p[SettingsKeys.SHIZUKU_ENHANCE] = s.shizukuEnhance
         }
     }
 }
