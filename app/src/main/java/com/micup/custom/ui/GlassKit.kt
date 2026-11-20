@@ -396,6 +396,7 @@ fun GlowButton(
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val scale by animateFloatAsState(if (pressed) 0.97f else 1f, label = "btnScale")
+    val cs = MaterialTheme.colorScheme
     Box(
         modifier
             .graphicsLayer {
