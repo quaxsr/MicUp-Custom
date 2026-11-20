@@ -128,6 +128,7 @@ fun MicUpTheme(
         val window = (view.context as? Activity)?.window
         if (window != null) {
             WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = !dark
+            WindowCompat.getInsetsController(window, view).isAppearanceLightNavigationBars = !dark
         }
         onDispose { }
     }

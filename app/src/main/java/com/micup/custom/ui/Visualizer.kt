@@ -48,8 +48,8 @@ fun AudioVisualizer(
     )
     Canvas(modifier) {
         when (style) {
-            VisualizerStyle.WAVEFORM -> drawWave(frame, idleT, cs)
-            VisualizerStyle.SPECTRUM -> drawSpectrum(frame, idleT, cs)
+            VisualizerStyle.WAVEFORM -> drawWave(this, frame, idleT, cs)
+            VisualizerStyle.SPECTRUM -> drawSpectrum(this, frame, idleT, cs)
         }
     }
 }
@@ -98,7 +98,7 @@ private fun drawWave(scope: DrawScope, frame: EngineFrame?, idleT: Float, cs: Co
     scope.drawPath(
         line,
         Brush.horizontalGradient(listOf(cs.primary, cs.tertiary)),
-        style = Stroke(width = 2.5.dp.toPx(), cap = StrokeCap.Round)
+        style = Stroke(width = with(scope) { 2.5.dp.toPx() }, cap = StrokeCap.Round)
     )
 }
 
@@ -106,12 +106,17 @@ private fun drawSpectrum(scope: DrawScope, frame: EngineFrame?, idleT: Float, cs
     val w = scope.size.width
     val h = scope.size.height
     val n = AudioEngine.SPEC_BARS
-    val gap = 3.dp.toPx()
+    val gap = with(scope) { 3.dp.toPx() }
     val barW = (w - gap * (n - 1)) / n
     val maxHeight = h * 0.86f
     val base = 0.05f
     val spectrum = frame?.spectrum
     val peaks = frame?.peaks
+    val gradient = Brush.verticalGradient(
+        listOf(cs.tertiary.copy(alpha = 0.9f), cs.primary),
+        startY = 0f,
+        endY = h
+    )
     for (i in 0 until n) {
         val raw = spectrum?.get(i) ?: idleBar(i, idleT)
         val v = raw.coerceIn(0f, 1f)
@@ -119,7 +124,7 @@ private fun drawSpectrum(scope: DrawScope, frame: EngineFrame?, idleT: Float, cs
         val x = i * (barW + gap)
         val y0 = h - bh
         scope.drawRoundRect(
-            brush = Brush.verticalGradient(listOf(cs.tertiary.copy(alpha = 0.9f), cs.primary), startY = y0, endY = h),
+            brush = gradient,
             topLeft = Offset(x, y0),
             size = Size(barW, bh),
             cornerRadius = CornerRadius(barW / 2f, barW / 2f)
@@ -128,9 +133,9 @@ private fun drawSpectrum(scope: DrawScope, frame: EngineFrame?, idleT: Float, cs
         val py = h - (base + pk * 0.95f) * maxHeight
         scope.drawRoundRect(
             color = cs.onSurfaceVariant.copy(alpha = 0.55f),
-            topLeft = Offset(x, (py - 3.dp.toPx()).coerceAtLeast(0f)),
-            size = Size(barW, 3.dp.toPx()),
-            cornerRadius = CornerRadius(2.dp.toPx(), 2.dp.toPx())
+            topLeft = Offset(x, (py - with(scope) { 3.dp.toPx() }).coerceAtLeast(0f)),
+            size = Size(barW, with(scope) { 3.dp.toPx() }),
+            cornerRadius = CornerRadius(with(scope) { 2.dp.toPx() }, with(scope) { 2.dp.toPx() })
         )
     }
 }

@@ -1,6 +1,7 @@
 package com.micup.custom.ui
 
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
@@ -37,6 +38,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -44,6 +46,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
@@ -81,18 +84,15 @@ fun AuroraBackground(modifier: Modifier = Modifier) {
     val colors = if (dark) DarkAurora else LightAurora
     val alphaScale = if (dark) 0.5f else 0.75f
     val transition = rememberInfiniteTransition(label = "aurora")
-    val t by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(animation = tween(18000, easing = LinearEasing)),
-        label = "auroraT"
-    )
-    val angle = t * 2f * PI.toFloat()
+    val tState by transition.animateFloat(initialValue = 0f, targetValue = 1f, animationSpec = infiniteRepeatable(animation = tween(durationMillis = 6000, easing = LinearEasing), repeatMode = RepeatMode.Restart))
+    val angle by remember {
+        derivedStateOf { tState * 2f * PI.toFloat() }
+    }
 
     Box(modifier.background(MaterialTheme.colorScheme.background)) {
-        AuroraBlob(colors[0], 420.dp, 380.dp, Alignment(-0.55f, -0.65f), angle, 0.0f, 46.dp, 34.dp, alphaScale * 0.9f)
-        AuroraBlob(colors[1], 460.dp, 420.dp, Alignment(0.45f, -0.35f), angle, 2.1f, -38.dp, 30.dp, alphaScale * 0.8f)
-        AuroraBlob(colors[2], 400.dp, 460.dp, Alignment(0.1f, 0.6f), angle, 4.2f, 30.dp, -26.dp, alphaScale * 0.7f)
+        AuroraBlob(colors[0], 420.dp, 380.dp, BiasAlignment(-0.55f, -0.65f), { angle }, 0.0f, 46.dp, 34.dp, alphaScale * 0.9f)
+        AuroraBlob(colors[1], 460.dp, 420.dp, BiasAlignment(0.45f, -0.35f), { angle }, 2.1f, -38.dp, 30.dp, alphaScale * 0.8f)
+        AuroraBlob(colors[2], 400.dp, 460.dp, BiasAlignment(0.1f, 0.6f), { angle }, 4.2f, 30.dp, -26.dp, alphaScale * 0.7f)
     }
 }
 
@@ -102,7 +102,7 @@ private fun AuroraBlob(
     width: Dp,
     height: Dp,
     anchor: Alignment,
-    angle: Float,
+    angleProvider: () -> Float,
     phase: Float,
     driftX: Dp,
     driftY: Dp,
@@ -112,7 +112,12 @@ private fun AuroraBlob(
         Box(
             Modifier
                 .align(anchor)
-                .offset(x = driftX * sin(angle + phase), y = driftY * sin(angle * 0.6f + phase + 1.3f))
+                .offset {
+                    val angle = angleProvider()
+                    val xpx = driftX.toPx() * sin(angle + phase)
+                    val ypx = driftY.toPx() * sin(angle * 0.6f + phase + 1.3f)
+                    IntOffset(xpx.roundToInt(), ypx.roundToInt())
+                }
                 .size(width, height)
                 .alpha(alpha)
                 .background(Brush.radialGradient(listOf(color.copy(alpha = 0.95f), color.copy(alpha = 0f))))
@@ -186,7 +191,7 @@ fun GlassSlider(
     valueText: String,
     modifier: Modifier = Modifier,
     accent: Color = MaterialTheme.colorScheme.primary,
-    onFinish: (() -> Unit)? = null
+    onFinish: ((Float) -> Unit)? = null
 ) {
     val cs = MaterialTheme.colorScheme
     val dark = isDarkTheme()
@@ -196,9 +201,12 @@ fun GlassSlider(
     var pressed by remember { mutableStateOf(false) }
     val thumbScale by animateFloatAsState(if (pressed) 1.25f else 1f, label = "thumbScale")
 
-    // pointerInput 只捕获首次组合的 lambda，用 rememberUpdatedState 保证回调始终最新
-    val currentOnChange by rememberUpdatedState(onValueChange)
-    val currentOnFinish by rememberUpdatedState(onFinish)
+    var lastValue by remember { mutableFloatStateOf(value) }
+    val currentOnChange by rememberUpdatedState<(Float) -> Unit> { newValue ->
+        lastValue = newValue
+        onValueChange(newValue)
+    }
+    val currentOnFinish by rememberUpdatedState<((Float) -> Unit)?>(onFinish)
 
     Column(modifier) {
         Row(
@@ -228,7 +236,7 @@ fun GlassSlider(
                             currentOnChange(valueRange.start + f * span)
                         }
                         pressed = false
-                        currentOnFinish?.invoke()
+                        currentOnFinish?.invoke(lastValue)
                     }
                 }
         ) {

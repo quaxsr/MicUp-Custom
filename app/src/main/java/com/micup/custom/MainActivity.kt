@@ -48,6 +48,7 @@ import com.micup.custom.data.CaptureSourceMode
 import com.micup.custom.data.MicUpSettings
 import com.micup.custom.data.SettingsRepository
 import com.micup.custom.service.CaptureService
+import rikka.shizuku.Shizuku
 import com.micup.custom.shizuku.ShizukuGate
 import com.micup.custom.shizuku.ShizukuStatus
 import com.micup.custom.ui.AuroraBackground
@@ -55,7 +56,6 @@ import com.micup.custom.ui.MainScreen
 import com.micup.custom.ui.SettingsScreen
 import com.micup.custom.ui.theme.MicUpTheme
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -79,13 +79,19 @@ private fun MicUpRoot() {
     var showSettings by rememberSaveable { mutableStateOf(false) }
     var pendingMode by remember { mutableStateOf<CaptureSourceMode?>(null) }
     var shizuku by remember { mutableStateOf(ShizukuStatus()) }
+    var loadedOnce by remember { mutableStateOf(false) }
 
     // 设置装载（rememberTuning 关闭时，可调参数启动即回默认）
     LaunchedEffect(Unit) {
         repo.settings.collect { s ->
             if (!previewing) {
-                ui = if (s.rememberTuning) s
-                else s.copy(gainDb = 0f, eqLowDb = 0f, eqMidDb = 0f, eqHighDb = 0f)
+                if (!loadedOnce) {
+                    ui = if (s.rememberTuning) s
+                    else s.copy(gainDb = 0f, eqLowDb = 0f, eqMidDb = 0f, eqHighDb = 0f)
+                    loadedOnce = true
+                } else {
+                    ui = s
+                }
             }
         }
     }
@@ -101,36 +107,36 @@ private fun MicUpRoot() {
         scope.launch { repo.update(s) }
     }
 
-    // Shizuku 状态轮询 + 授权结果监听
-    LaunchedEffect(Unit) {
-        while (true) {
-            shizuku = ShizukuGate.status(context)
-            delay(3000)
-        }
-    }
+    // Shizuku 状态监听
     DisposableEffect(Unit) {
-        val listener = Shizuku.OnRequestPermissionResultListener { _, _ ->
-            shizuku = ShizukuGate.status(context)
+        val onShizukuChange: () -> Unit = { shizuku = ShizukuGate.status(context) }
+        val binderListener = ShizukuGate.addBinderStateListener(onShizukuChange)
+        val permissionListener = Shizuku.OnRequestPermissionResultListener { _, _ ->
+            onShizukuChange()
         }
-        ShizukuGate.addPermissionListener(listener)
-        onDispose { ShizukuGate.removePermissionListener(listener) }
+        ShizukuGate.addPermissionListener(permissionListener)
+        onDispose {
+            ShizukuGate.removeBinderStateListener(onShizukuChange)
+            ShizukuGate.removePermissionListener(permissionListener)
+        }
     }
 
     // 引擎状态与可视化数据
     val engineState by EngineBus.state.collectAsState()
-    val frame by EngineBus.frame.collectAsState()
 
     // UI 设置 → 引擎热更新
     LaunchedEffect(ui) {
-        EngineBus.params.value = EngineParams(
-            gainDb = ui.gainDb,
-            preset = ui.preset,
-            eqLowDb = ui.eqLowDb,
-            eqMidDb = ui.eqMidDb,
-            eqHighDb = ui.eqHighDb,
-            monitorEnabled = ui.monitorEnabled,
-            bufferMultiplier = ui.bufferPreset.multiplier
-        )
+        if (loadedOnce) {
+            EngineBus.params.value = EngineParams(
+                gainDb = ui.gainDb,
+                preset = ui.preset,
+                eqLowDb = ui.eqLowDb,
+                eqMidDb = ui.eqMidDb,
+                eqHighDb = ui.eqHighDb,
+                monitorEnabled = ui.monitorEnabled,
+                bufferMultiplier = ui.bufferPreset.multiplier
+            )
+        }
     }
 
     fun projectionIntent(): Intent {
@@ -153,6 +159,7 @@ private fun MicUpRoot() {
         )
     }
 
+    var pendingNotifMode by remember { mutableStateOf<CaptureSourceMode?>(null) }
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { grants ->
@@ -161,10 +168,10 @@ private fun MicUpRoot() {
             pendingMode = null
             launchCapture(mode, 0, null)
         } else {
+            pendingMode = null
             EngineBus.state.value = EngineState.Error("未授予麦克风权限，无法进行麦克风采集")
         }
     }
-
     val projectionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -174,11 +181,9 @@ private fun MicUpRoot() {
             launchCapture(mode, result.resultCode, result.data)
         }
     }
-
-    fun requestStart(mode: CaptureSourceMode) {
+    fun continueStart(mode: CaptureSourceMode) {
         when (mode) {
             CaptureSourceMode.MICROPHONE -> {
-                pendingMode = null
                 val granted = ContextCompat.checkSelfPermission(
                     context, Manifest.permission.RECORD_AUDIO
                 ) == PackageManager.PERMISSION_GRANTED
@@ -215,6 +220,33 @@ private fun MicUpRoot() {
         }
     }
 
+    val notifLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        val mode = pendingNotifMode
+        pendingNotifMode = null
+        if (granted) {
+            continueStart(mode ?: CaptureSourceMode.MICROPHONE)
+        } else {
+            EngineBus.state.value = EngineState.Error("未授予通知权限，无法继续启动")
+        }
+    }
+
+    fun requestStart(mode: CaptureSourceMode) {
+        // 通知权限门控
+        if (Build.VERSION.SDK_INT >= 33) {
+            val hasNotifPerm = ContextCompat.checkSelfPermission(
+                context, Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!hasNotifPerm) {
+                pendingNotifMode = mode
+                notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                return
+            }
+        }
+        continueStart(mode)
+    }
+
     MicUpTheme(ui.themeMode, ui.materialStyle) {
         Box(
             Modifier
@@ -243,7 +275,6 @@ private fun MicUpRoot() {
                             onPreview = { preview(it) },
                             onCommit = { commit(it) },
                             engineState = engineState,
-                            frame = frame,
                             shizuku = shizuku,
                             onStart = { requestStart(it) },
                             onStop = { stopCapture() },

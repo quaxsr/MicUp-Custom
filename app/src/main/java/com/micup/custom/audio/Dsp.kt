@@ -153,6 +153,8 @@ class Fft(private val size: Int) {
     private val rev = IntArray(size)
     private val cosTable = DoubleArray(size / 2)
     private val sinTable = DoubleArray(size / 2)
+    private val re = DoubleArray(size)
+    private val im = DoubleArray(size)
 
     init {
         var bits = 0
@@ -172,8 +174,7 @@ class Fft(private val size: Int) {
     }
 
     fun magnitude(input: FloatArray, out: FloatArray) {
-        val re = DoubleArray(size)
-        val im = DoubleArray(size)
+        im.fill(0.0)
         for (i in 0 until size) re[rev[i]] = input[i].toDouble()
         var len = 2
         while (len <= size) {
@@ -197,7 +198,9 @@ class Fft(private val size: Int) {
             len = len shl 1
         }
         for (i in out.indices) {
-            if (i < size / 2) out[i] = sqrt(re[i] * re[i] + im[i] * im[i]).toFloat()
+            if (i < size / 2) {
+                out[i] = sqrt(re[i] * re[i] + im[i] * im[i]).toFloat()
+            }
         }
     }
 }

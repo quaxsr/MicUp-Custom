@@ -7,6 +7,8 @@ import android.media.AudioRecord
 import android.media.AudioTrack
 import android.media.MediaProjection
 import android.media.MediaRecorder
+import android.os.Handler
+import android.os.Looper
 import android.os.Build
 import android.os.Process
 import com.micup.custom.data.CaptureSourceMode
@@ -61,7 +63,8 @@ object EngineBus {
  */
 class AudioEngine(
     private val projection: MediaProjection?, // 内录模式需要；麦克风模式传 null
-    private val sourceMode: CaptureSourceMode
+    private val sourceMode: CaptureSourceMode,
+    private val onExit: (() -> Unit)? = null
 ) {
 
     private var record: AudioRecord? = null
@@ -114,13 +117,18 @@ class AudioEngine(
         running = false
         val t = thread
         thread = null
-        try { t?.join(1000) } catch (_: Throwable) {}
+        try { record?.stop() } catch (_: Throwable) {}
+        try { track?.pause() } catch (_: Throwable) {}
+        try { t?.join(1500) } catch (_: Throwable) {}
     }
 
     // ————— 采集源 —————
 
     private fun buildRecord(): AudioRecord? {
         val minBuf = AudioRecord.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_FLOAT)
+        if (minBuf <= 0) {
+            throw IllegalStateException("音频设备不支持当前采样配置")
+        }
         val bufBytes = max(minBuf, CHUNK * 4) * EngineBus.params.value.bufferMultiplier
         return when (sourceMode) {
             CaptureSourceMode.MICROPHONE -> AudioRecord(
@@ -156,6 +164,9 @@ class AudioEngine(
     private fun ensureTrack(): AudioTrack? {
         track?.let { return it }
         val minBuf = AudioTrack.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_FLOAT)
+        if (minBuf <= 0) {
+            return null
+        }
         val at = AudioTrack.Builder()
             .setAudioAttributes(
                 AudioAttributes.Builder()
@@ -195,6 +206,8 @@ class AudioEngine(
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO)
         val buf = FloatArray(CHUNK)
         var lastParams = EngineBus.params.value
+        var consecutiveErrors = 0
+        var exitError: String? = null
         while (running) {
             val p = EngineBus.params.value
             if (p != lastParams) {
@@ -205,23 +218,54 @@ class AudioEngine(
             val n = try {
                 rec.read(buf, 0, CHUNK, AudioRecord.READ_BLOCKING)
             } catch (t: Throwable) {
+                exitError = "采集异常：${t.message ?: t.javaClass.simpleName}"
                 break
             }
-            if (n <= 0) continue
-            chain.configure(p.preset, p.eqLowDb, p.eqMidDb, p.eqHighDb, p.gainDb)
-            chain.process(buf, n)
-            if (p.monitorEnabled) {
-                val at = ensureTrack()
-                if (at != null) {
-                    try { at.write(buf, 0, n, AudioTrack.WRITE_BLOCKING) } catch (_: Throwable) {}
+            if (n > 0) {
+                consecutiveErrors = 0
+                chain.configure(p.preset, p.eqLowDb, p.eqMidDb, p.eqHighDb, p.gainDb)
+                chain.process(buf, n)
+                if (p.monitorEnabled) {
+                    val at = ensureTrack()
+                    if (at != null) {
+                        try { at.write(buf, 0, n, AudioTrack.WRITE_BLOCKING) } catch (_: Throwable) {}
+                    }
+                }
+                pushVisual(buf, n)
+            } else if (n == 0) {
+                continue
+            } else {
+                if (n == AudioRecord.ERROR_DEAD_OBJECT) {
+                    try { rec.release() } catch (_: Throwable) {}
+                    record = null
+                    val newRec = try {
+                        buildRecord()
+                    } catch (t: Throwable) {
+                        exitError = "音频设备重建失败：${t.message ?: t.javaClass.simpleName}"
+                        break
+                    }
+                    if (newRec == null || newRec.state != AudioRecord.STATE_INITIALIZED) {
+                        exitError = "音频设备重建失败：状态异常或初始化失败"
+                        break
+                    }
+                    record = newRec
+                    consecutiveErrors = 0
+                    continue
+                }
+                consecutiveErrors++
+                if (consecutiveErrors >= 5) {
+                    exitError = "连续采集失败超过 5 次"
+                    break
                 }
             }
-            pushVisual(buf, n)
         }
         releaseAll()
+        Handler(Looper.getMainLooper()).post {
+            try { onExit?.invoke() } catch (_: Throwable) {}
+        }
         val s = EngineBus.state.value
         if (s is EngineState.Running || s is EngineState.Starting) {
-            EngineBus.state.value = EngineState.Idle
+            EngineBus.state.value = if (exitError != null) EngineState.Error(exitError!!) else EngineState.Idle
         }
     }
 

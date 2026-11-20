@@ -43,9 +43,9 @@ enum class VisualizerStyle(val label: String) {
 
 /** 缓冲档位（倍数作用于系统最小缓冲） */
 enum class BufferPreset(val label: String, val multiplier: Int, val desc: String) {
-    LOW("低延迟", 2, "x2 最小缓冲：响应最快，弱设备偶发抖动"),
-    BALANCED("均衡", 4, "x4 最小缓冲：延迟与稳定性兼顾"),
-    STABLE("稳定", 8, "x8 最小缓冲：最稳，但延迟最高")
+    LOW("低延迟", 2, "x2 最小缓冲：响应最快，弱设备偶发抖动（重启后生效）"),
+    BALANCED("均衡", 4, "x4 最小缓冲：延迟与稳定性兼顾（重启后生效）"),
+    STABLE("稳定", 8, "x8 最小缓冲：最稳，但延迟最高（重启后生效）")
 }
 
 /** 全量设置模型 */

@@ -33,6 +33,9 @@ class CaptureService : Service() {
     private var engine: AudioEngine? = null
     private var projection: MediaProjection? = null
 
+    @Volatile
+    private var shuttingDown = false
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -53,6 +56,7 @@ class CaptureService : Service() {
     }
 
     private fun handleStart(intent: Intent) {
+        shuttingDown = false
         createChannel()
         val modeName = intent.getStringExtra(EXTRA_MODE) ?: CaptureSourceMode.MICROPHONE.name
         val mode = runCatching { CaptureSourceMode.valueOf(modeName) }.getOrDefault(CaptureSourceMode.MICROPHONE)
@@ -96,7 +100,7 @@ class CaptureService : Service() {
                 }
             }, Handler(Looper.getMainLooper()))
 
-            val engine = AudioEngine(mp, mode)
+            val engine = AudioEngine(mp, mode) { shutdown() }
             this.engine = engine
             if (!engine.start()) shutdown()
         } catch (t: Throwable) {
@@ -106,8 +110,10 @@ class CaptureService : Service() {
     }
 
     private fun shutdown() {
+        if (shuttingDown) return
+        shuttingDown = true
         engine?.stop()
-        engine = null
+        try { projection?.stop() } catch (_: Throwable) {}
         projection = null
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -158,6 +164,7 @@ class CaptureService : Service() {
     override fun onDestroy() {
         engine?.stop()
         engine = null
+        try { projection?.stop() } catch (_: Throwable) {}
         super.onDestroy()
     }
 

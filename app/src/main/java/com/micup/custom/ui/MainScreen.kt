@@ -29,6 +29,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -42,7 +44,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.micup.custom.audio.EngineBus
-import com.micup.custom.audio.EngineFrame
 import com.micup.custom.audio.EngineState
 import com.micup.custom.data.CaptureSourceMode
 import com.micup.custom.data.EffectPreset
@@ -58,7 +59,6 @@ fun MainScreen(
     onPreview: (MicUpSettings) -> Unit,
     onCommit: (MicUpSettings) -> Unit,
     engineState: EngineState,
-    frame: EngineFrame?,
     shizuku: ShizukuStatus,
     onStart: (CaptureSourceMode) -> Unit,
     onStop: () -> Unit,
@@ -79,7 +79,7 @@ fun MainScreen(
 
         SourceCard(settings, engineState, shizuku, onStart, onShizukuAuth)
         Spacer(Modifier.height(12.dp))
-        EngineCard(settings, engineState, frame, onStart, onStop)
+        EngineCard(settings, engineState, onStart, onStop)
         Spacer(Modifier.height(12.dp))
         TuningCard(settings, onPreview, onCommit)
         Spacer(Modifier.height(12.dp))
@@ -163,9 +163,9 @@ private fun SourceCard(
         SectionHeader("采集源")
         Spacer(Modifier.height(12.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            SourceOption(CaptureSourceMode.MICROPHONE, Icons.Filled.Mic, settings.captureSource, running, Modifier.weight(1f), onSelect = onStart)
-            SourceOption(CaptureSourceMode.INTERNAL_PLAYBACK, Icons.Filled.GraphicEq, settings.captureSource, running, Modifier.weight(1f), onSelect = onStart)
-            SourceOption(CaptureSourceMode.SHIZUKU_ENHANCED, Icons.Filled.Terminal, settings.captureSource, running, Modifier.weight(1f), onSelect = onStart)
+            SourceOption(CaptureSourceMode.MICROPHONE, Icons.Filled.Mic, settings.captureSource, running, Modifier.weight(1f), onSelect = { m -> onCommit(settings.copy(captureSource = m)) })
+            SourceOption(CaptureSourceMode.INTERNAL_PLAYBACK, Icons.Filled.GraphicEq, settings.captureSource, running, Modifier.weight(1f), onSelect = { m -> onCommit(settings.copy(captureSource = m)) })
+            SourceOption(CaptureSourceMode.SHIZUKU_ENHANCED, Icons.Filled.Terminal, settings.captureSource, running, Modifier.weight(1f), onSelect = { m -> onCommit(settings.copy(captureSource = m)) })
         }
         Spacer(Modifier.height(10.dp))
         Text(
@@ -268,12 +268,12 @@ private fun ShizukuInline(status: ShizukuStatus, onAuth: () -> Unit) {
 private fun EngineCard(
     settings: MicUpSettings,
     engineState: EngineState,
-    frame: EngineFrame?,
     onStart: (CaptureSourceMode) -> Unit,
     onStop: () -> Unit
 ) {
     val cs = MaterialTheme.colorScheme
     val running = engineState is EngineState.Running
+    val frame by EngineBus.frame.collectAsState()
     GlassCard {
         Box(Modifier.fillMaxWidth().height(150.dp)) {
             AudioVisualizer(frame, settings.visualizerStyle, Modifier.fillMaxSize())
@@ -340,7 +340,7 @@ private fun TuningCard(
             label = "总增益",
             valueText = "%+.1f dB".format(settings.gainDb),
             accent = cs.primary,
-            onFinish = { onCommit(settings) }
+            onFinish = { v -> onCommit(settings.copy(gainDb = ((v * 2f).roundToInt()) / 2f)) }
         )
         Spacer(Modifier.height(6.dp))
         GlassSlider(
@@ -350,7 +350,7 @@ private fun TuningCard(
             label = "低频 · 120Hz",
             valueText = "%+.0f dB".format(settings.eqLowDb),
             accent = cs.tertiary,
-            onFinish = { onCommit(settings) }
+            onFinish = { v -> onCommit(settings.copy(eqLowDb = v.roundToInt().toFloat())) }
         )
         Spacer(Modifier.height(6.dp))
         GlassSlider(
@@ -360,7 +360,7 @@ private fun TuningCard(
             label = "中频 · 1.2kHz",
             valueText = "%+.0f dB".format(settings.eqMidDb),
             accent = cs.primary,
-            onFinish = { onCommit(settings) }
+            onFinish = { v -> onCommit(settings.copy(eqMidDb = v.roundToInt().toFloat())) }
         )
         Spacer(Modifier.height(6.dp))
         GlassSlider(
@@ -370,7 +370,7 @@ private fun TuningCard(
             label = "高频 · 6kHz",
             valueText = "%+.0f dB".format(settings.eqHighDb),
             accent = cs.secondary,
-            onFinish = { onCommit(settings) }
+            onFinish = { v -> onCommit(settings.copy(eqHighDb = v.roundToInt().toFloat())) }
         )
         Spacer(Modifier.height(16.dp))
         SectionHeader("预设音效")
