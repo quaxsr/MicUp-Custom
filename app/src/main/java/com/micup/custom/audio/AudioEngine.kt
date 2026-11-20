@@ -11,6 +11,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.Build
 import android.os.Process
+import androidx.annotation.RequiresApi
 import com.micup.custom.data.CaptureSourceMode
 import com.micup.custom.data.EffectPreset
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -124,6 +125,7 @@ class AudioEngine(
 
     // ————— 采集源 —————
 
+    @RequiresApi(Build.VERSION_CODES.Q)
     private fun buildRecord(): AudioRecord? {
         val minBuf = AudioRecord.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_FLOAT)
         if (minBuf <= 0) {
@@ -152,7 +154,7 @@ class AudioEngine(
                     .build()
                 AudioRecord.Builder()
                     .setAudioFormat(format)
-                    .setAudioPlaybackCaptureConfiguration(config)
+                    .setAudioPlaybackCaptureConfig(config)
                     .setBufferSizeInBytes(bufBytes)
                     .build()
             }
