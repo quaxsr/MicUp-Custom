@@ -36,7 +36,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ImageVector
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -77,7 +77,7 @@ fun MainScreen(
 
         ErrorBanner(engineState)
 
-        SourceCard(settings, engineState, shizuku, onStart, onShizukuAuth)
+        SourceCard(settings, onCommit, engineState, shizuku, onStart, onShizukuAuth)
         Spacer(Modifier.height(12.dp))
         EngineCard(settings, engineState, onStart, onStop)
         Spacer(Modifier.height(12.dp))
@@ -153,6 +153,7 @@ private fun ErrorBanner(state: EngineState) {
 @Composable
 private fun SourceCard(
     settings: MicUpSettings,
+    onCommit: (MicUpSettings) -> Unit,
     engineState: EngineState,
     shizuku: ShizukuStatus,
     onStart: (CaptureSourceMode) -> Unit,

@@ -63,16 +63,18 @@ fun SettingsScreen(
             ChoiceRow(
                 ThemeMode.entries.toList(),
                 { it.label },
-                settings.themeMode
-            ) { onCommit(settings.copy(themeMode = it)) }
+                settings.themeMode,
+                onSelect = { onCommit(settings.copy(themeMode = it)) }
+            )
             Spacer(Modifier.height(14.dp))
             Text("界面材质", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(8.dp))
             ChoiceRow(
                 MaterialStyle.entries.toList(),
                 { it.label },
-                settings.materialStyle
-            ) { onCommit(settings.copy(materialStyle = it)) }
+                settings.materialStyle,
+                onSelect = { onCommit(settings.copy(materialStyle = it)) }
+            )
             Spacer(Modifier.height(8.dp))
             Text(
                 settings.materialStyle.desc,
@@ -88,8 +90,9 @@ fun SettingsScreen(
             ChoiceRow(
                 VisualizerStyle.entries.toList(),
                 { it.label },
-                settings.visualizerStyle
-            ) { onCommit(settings.copy(visualizerStyle = it)) }
+                settings.visualizerStyle,
+                onSelect = { onCommit(settings.copy(visualizerStyle = it)) }
+            )
         }
         Spacer(Modifier.height(12.dp))
 
@@ -101,16 +104,18 @@ fun SettingsScreen(
             ChoiceRow(
                 CaptureSourceMode.entries.toList(),
                 { it.label },
-                settings.captureSource
-            ) { onCommit(settings.copy(captureSource = it)) }
+                settings.captureSource,
+                onSelect = { onCommit(settings.copy(captureSource = it)) }
+            )
             Spacer(Modifier.height(12.dp))
             Text("缓冲档位", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(8.dp))
             ChoiceRow(
                 BufferPreset.entries.toList(),
                 { it.label },
-                settings.bufferPreset
-            ) { onCommit(settings.copy(bufferPreset = it)) }
+                settings.bufferPreset,
+                onSelect = { onCommit(settings.copy(bufferPreset = it)) }
+            )
             Spacer(Modifier.height(8.dp))
             Text(
                 settings.bufferPreset.desc,
