@@ -23,6 +23,8 @@ android {
         externalNativeBuild {
             cmake {
                 cppFlags += "-O2"
+                cppFlags += "-std=c++17"
+                arguments += "-DANDROID_STL=c++_shared"  // Oboe 依赖动态 STL，静态 STL 会报 CXX1212
             }
         }
     }
