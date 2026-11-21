@@ -61,22 +61,44 @@ object EngineBus {
 
 /**
  * 采集 → DSP → 路由 一体化实时引擎。
- * 独立高优先级线程跑实时环；监听输出走系统提示音通道（USAGE_ASSISTANCE_SONIFICATION），
- * 不在内录捕获范围（MEDIA/GAME/UNKNOWN）内，避免自激回授啸叫。
+ *
+ * 双路径：
+ * - native 路径（默认）：麦克风模式由 NativeAudioEngine 的 Oboe 输入流接管采集与全部处理（C++ 原地 DSP，
+ *   回调线程零内存分配），Kotlin 不参与音频流处理；系统内录模式因投屏捕获必须由 Java 层
+ *   AudioRecord（AudioPlaybackCaptureConfiguration）承载，保留 Kotlin 读循环仅做读取，
+ *   DSP/监听/可视化经 nativeFeed 下沉到 C++；
+ * - Kotlin 降级路径（Dsp.kt + 本类 loop/pushVisual）：native 库加载或启动失败时回退，行为与历史版本一致。
+ *
+ * 监听输出走系统提示音通道（USAGE_ASSISTANCE_SONIFICATION），不在内录捕获范围
+ * （MEDIA/GAME/UNKNOWN）内，避免自激回授啸叫；native 侧同样按此语义建输出流。
+ *
+ * 契约保留：onExit 主线程投递、DEAD_OBJECT 重建、连续 5 次错误退出、
+ * HyperOS 拦截降级（downgradedToMic 每会话一次）均不回退。
  */
 class AudioEngine(
     private val projection: MediaProjection?, // 内录模式需要；麦克风模式传 null
     private val sourceMode: CaptureSourceMode,
     private val onExit: (() -> Unit)? = null
-) {
+) : NativeAudioEngine.Listener {
 
     private var record: AudioRecord? = null
     private var track: AudioTrack? = null
     private var thread: Thread? = null
+    private var paramsThread: Thread? = null
+    private var nativeEngine: NativeAudioEngine? = null
 
     @Volatile
     private var running = false
 
+    /** native DSP 是否接管（Oboe 全接管或内录 feed 模式） */
+    @Volatile
+    private var nativeActive = false
+
+    /** 收尾幂等标记（loop 退出与 native 错误回调都可能触发 finish） */
+    @Volatile
+    private var finished = false
+
+    // ————— Kotlin 降级路径专用（native 路径不使用） —————
     private val fft = Fft(FFT_SIZE)
     private val hann = FloatArray(FFT_SIZE) { i -> (0.5 - 0.5 * cos(2.0 * PI * i / FFT_SIZE)).toFloat() }
     private val fftIn = FloatArray(FFT_SIZE)
@@ -99,36 +121,146 @@ class AudioEngine(
         EngineBus.frame.value = null
         EngineBus.state.value = EngineState.Starting
         downgradedToMic = false
-        val ar = acquireRecord() ?: return false
-        if (ar.state != AudioRecord.STATE_INITIALIZED) {
-            try { ar.release() } catch (_: Throwable) {}
-            EngineBus.state.value = EngineState.Error("AudioRecord 初始化失败（权限或设备被占用）")
-            return false
+        finished = false
+
+        val useOboeInput = sourceMode == CaptureSourceMode.MICROPHONE
+        val ne = NativeAudioEngine.create()
+        if (ne != null) {
+            try { ne.nativeSetListener(this) } catch (_: Throwable) {}
+            if (!useOboeInput) {
+                // 系统内录捕获只能由 Java 层 AudioRecord 承载（Oboe 无法读取投屏音频）：
+                // native 只接管 DSP/监听/可视化，读取仍走 Kotlin 读循环经 nativeFeed 送入
+                val ar = acquireRecord() ?: return false
+                if (ar.state != AudioRecord.STATE_INITIALIZED) {
+                    try { ar.release() } catch (_: Throwable) {}
+                    EngineBus.state.value = EngineState.Error("AudioRecord 初始化失败（权限或设备被占用）")
+                    return false
+                }
+                record = ar
+            }
+            val ok = try {
+                ne.nativeStart(SAMPLE_RATE, 1, EngineBus.params.value.bufferMultiplier, useOboeInput)
+            } catch (t: Throwable) {
+                Log.w(TAG, "native 音频核心启动失败，回退 Kotlin AudioRecord 路径", t)
+                false
+            }
+            if (ok) {
+                nativeEngine = ne
+                nativeActive = true
+                running = true
+                forwardInitialParams(ne)
+                // 降级事实经既有状态通道记录：以实际生效的采集源（MICROPHONE）上报
+                EngineBus.state.value =
+                    if (downgradedToMic) EngineState.Running(CaptureSourceMode.MICROPHONE, SAMPLE_RATE)
+                    else EngineState.Running(sourceMode, SAMPLE_RATE)
+                if (useOboeInput) startParamsWatcher() else startLoopThread()
+                return true
+            }
+            try { ne.nativeStop() } catch (_: Throwable) {}
+            try { ne.nativeSetListener(null) } catch (_: Throwable) {}
+            Log.w(TAG, "native 音频核心不可用，回退 Kotlin AudioRecord 路径")
+        } else {
+            Log.w(TAG, "native 音频库不可用，回退 Kotlin AudioRecord 路径")
         }
-        record = ar
-        chain.reset()
-        running = true
-        // 降级事实经既有状态通道记录：以实际生效的采集源（MICROPHONE）上报
-        EngineBus.state.value =
-            if (downgradedToMic) EngineState.Running(CaptureSourceMode.MICROPHONE, SAMPLE_RATE)
-            else EngineState.Running(sourceMode, SAMPLE_RATE)
-        thread = Thread({ loop() }, "MicUp-DSP").apply {
-            priority = Thread.MAX_PRIORITY
-            start()
-        }
-        return true
+        return startKotlinLoop()
     }
 
     fun stop() {
         running = false
+        val wasNativeOnly = nativeActive && thread == null
         val t = thread
         thread = null
+        try { nativeEngine?.nativeStop() } catch (_: Throwable) {}
         try { record?.stop() } catch (_: Throwable) {}
         try { track?.pause() } catch (_: Throwable) {}
         try { t?.join(1500) } catch (_: Throwable) {}
+        paramsThread?.interrupt()
+        paramsThread = null
+        // 纯 native（Oboe 回调）模式没有 loop 线程收尾：复刻原 loop 退出语义（Idle + onExit 主线程投递）
+        if (wasNativeOnly) finish(null)
     }
 
-    // ————— 采集源（含 HyperOS 拦截降级） —————
+    // ————— native 路径参数转发 —————
+
+    /** 预设偏移与 ±24dB clamp 在 Kotlin 侧完成（语义同 DspChain.configure 的入参合并） */
+    private fun eqDb(base: Float, offset: Float): Float = (base + offset).coerceIn(-24f, 24f)
+
+    private fun forwardInitialParams(ne: NativeAudioEngine) {
+        try {
+            val p = EngineBus.params.value
+            ne.nativeSetEq(eqDb(p.preset.low, p.eqLowDb), eqDb(p.preset.mid, p.eqMidDb), eqDb(p.preset.high, p.eqHighDb))
+            ne.nativeSetGain(p.gainDb)
+            ne.nativeSetMonitor(p.monitorEnabled)
+        } catch (_: Throwable) {}
+    }
+
+    private fun forwardParams(ne: NativeAudioEngine, p: EngineParams, last: EngineParams) {
+        try {
+            if (p.preset != last.preset || p.eqLowDb != last.eqLowDb ||
+                p.eqMidDb != last.eqMidDb || p.eqHighDb != last.eqHighDb
+            ) {
+                ne.nativeSetEq(eqDb(p.preset.low, p.eqLowDb), eqDb(p.preset.mid, p.eqMidDb), eqDb(p.preset.high, p.eqHighDb))
+            }
+            if (p.gainDb != last.gainDb) ne.nativeSetGain(p.gainDb)
+            if (p.monitorEnabled != last.monitorEnabled) ne.nativeSetMonitor(p.monitorEnabled)
+        } catch (_: Throwable) {}
+    }
+
+    /** 纯 native（Oboe 回调）模式：轻量参数监视线程，把 EngineBus.params 热更新转发给 native */
+    private fun startParamsWatcher() {
+        paramsThread = Thread({
+            var last = EngineBus.params.value
+            while (running) {
+                val p = EngineBus.params.value
+                if (p != last) {
+                    nativeEngine?.let { forwardParams(it, p, last) }
+                    last = p
+                }
+                try {
+                    Thread.sleep(20)
+                } catch (_: InterruptedException) {
+                    break
+                }
+            }
+        }, "MicUp-Params").apply {
+            priority = Thread.NORM_PRIORITY + 1
+            start()
+        }
+    }
+
+    // ————— Kotlin 降级路径启动 —————
+
+    /** native 不可用时的原纯 Kotlin 路径（Dsp.kt + AudioTrack 监听 + pushVisual），行为与历史版本一致 */
+    private fun startKotlinLoop(): Boolean {
+        if (record == null) {
+            record = acquireRecord() ?: return false
+        }
+        val ar = record ?: return false
+        if (ar.state != AudioRecord.STATE_INITIALIZED) {
+            try { ar.release() } catch (_: Throwable) {}
+            record = null
+            EngineBus.state.value = EngineState.Error("AudioRecord 初始化失败（权限或设备被占用）")
+            return false
+        }
+        chain.reset()
+        nativeActive = false
+        nativeEngine = null
+        running = true
+        EngineBus.state.value =
+            if (downgradedToMic) EngineState.Running(CaptureSourceMode.MICROPHONE, SAMPLE_RATE)
+            else EngineState.Running(sourceMode, SAMPLE_RATE)
+        startLoopThread()
+        return true
+    }
+
+    private fun startLoopThread() {
+        thread = Thread({ loop() }, "MicUp-DSP").apply {
+            priority = Thread.MAX_PRIORITY
+            start()
+        }
+    }
+
+    // ————— 采集源（含 HyperOS 拦截降级，第1阶段行为原样保留） —————
 
     /**
      * 构建 AudioRecord：MediaProjection 链路（capture 配置获取、AudioRecord 构建）包进 try-catch，
@@ -245,7 +377,7 @@ class AudioEngine(
             .build()
     }
 
-    // ————— 监听路由（懒创建，随开关热插拔） —————
+    // ————— 监听路由（仅 Kotlin 降级路径；native 路径由 C++ 侧建输出流） —————
 
     private fun ensureTrack(): AudioTrack? {
         track?.let { return it }
@@ -286,7 +418,7 @@ class AudioEngine(
         track = null
     }
 
-    // ————— 实时环 —————
+    // ————— 实时环（Kotlin 降级路径读循环 + 内录 feed 模式读循环共用） —————
 
     private fun loop() {
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO)
@@ -297,7 +429,13 @@ class AudioEngine(
         while (running) {
             val p = EngineBus.params.value
             if (p != lastParams) {
-                if (!p.monitorEnabled) releaseTrack()
+                val ne = if (nativeActive) nativeEngine else null
+                if (ne != null) {
+                    // 内录 feed 模式：参数热更新转发给 native
+                    forwardParams(ne, p, lastParams)
+                } else if (!p.monitorEnabled) {
+                    releaseTrack()
+                }
                 lastParams = p
             }
             val rec = record ?: break
@@ -316,15 +454,26 @@ class AudioEngine(
             }
             if (n > 0) {
                 consecutiveErrors = 0
-                chain.configure(p.preset, p.eqLowDb, p.eqMidDb, p.eqHighDb, p.gainDb)
-                chain.process(buf, n)
-                if (p.monitorEnabled) {
-                    val at = ensureTrack()
-                    if (at != null) {
-                        try { at.write(buf, 0, n, AudioTrack.WRITE_BLOCKING) } catch (_: Throwable) {}
+                val ne = if (nativeActive) nativeEngine else null
+                if (ne != null) {
+                    // 内录 feed 模式：DSP/监听/可视化在 native 内完成，Kotlin 只读取
+                    try {
+                        ne.nativeFeed(buf, n)
+                    } catch (t: Throwable) {
+                        exitError = "native 处理异常：${t.message ?: t.javaClass.simpleName}"
+                        break
                     }
+                } else {
+                    chain.configure(p.preset, p.eqLowDb, p.eqMidDb, p.eqHighDb, p.gainDb)
+                    chain.process(buf, n)
+                    if (p.monitorEnabled) {
+                        val at = ensureTrack()
+                        if (at != null) {
+                            try { at.write(buf, 0, n, AudioTrack.WRITE_BLOCKING) } catch (_: Throwable) {}
+                        }
+                    }
+                    pushVisual(buf, n)
                 }
-                pushVisual(buf, n)
             } else if (n == 0) {
                 continue
             } else {
@@ -363,15 +512,25 @@ class AudioEngine(
                 }
             }
         }
+        finish(exitError)
+    }
+
+    /** 收尾（幂等）：native 错误回调与 loop 退出/stop 都可能触发；onExit 主线程投递契约保留 */
+    private fun finish(exitError: String?) {
+        if (finished) return
+        finished = true
+        running = false
         releaseAll()
         Handler(Looper.getMainLooper()).post {
             try { onExit?.invoke() } catch (_: Throwable) {}
         }
         val s = EngineBus.state.value
         if (s is EngineState.Running || s is EngineState.Starting) {
-            EngineBus.state.value = if (exitError != null) EngineState.Error(exitError!!) else EngineState.Idle
+            EngineBus.state.value = if (exitError != null) EngineState.Error(exitError) else EngineState.Idle
         }
     }
+
+    // ————— Kotlin 降级路径可视化（native 路径的波形数据源改为 native 回调） —————
 
     private fun pushVisual(buf: FloatArray, n: Int) {
         // 滚动窗口（供 FFT 与波形）
@@ -425,6 +584,17 @@ class AudioEngine(
         record = null
         EngineBus.frame.value = null
         try { projection?.stop() } catch (_: Throwable) {}
+    }
+
+    // ————— NativeAudioEngine.Listener：native 回调（Oboe/feed 两路共用） —————
+
+    override fun onNativeFrame(wave: FloatArray, bars: FloatArray, peaks: FloatArray, rmsDb: Float) {
+        EngineBus.frame.value = EngineFrame(wave, bars, peaks, rmsDb)
+    }
+
+    override fun onNativeError(message: String) {
+        Log.w(TAG, "native 音频核心错误：$message")
+        finish(message)
     }
 
     companion object {

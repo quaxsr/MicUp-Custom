@@ -7,6 +7,8 @@ plugins {
 android {
     namespace = "com.micup.custom"
     compileSdk = 35
+    // GH runner 可自动安装的 NDK 版本（AGP 按需拉取，GitHub 托管 runner 许可已预接受）
+    ndkVersion = "27.2.12479018"
 
     defaultConfig {
         applicationId = "com.micup.custom"
@@ -14,6 +16,15 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "1.0.0"
+
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        }
+        externalNativeBuild {
+            cmake {
+                cppFlags += "-O2"
+            }
+        }
     }
 
     buildTypes {
@@ -22,6 +33,13 @@ android {
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             // 云端构建无签名密钥：release 直接复用自动生成的 debug 密钥，产物可直接安装
             signingConfig = signingConfigs.getByName("debug")
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
         }
     }
 
@@ -34,6 +52,7 @@ android {
     }
     buildFeatures {
         compose = true
+        prefab = true // 消费 com.google.oboe:oboe 的 prefab AAR
     }
     packaging {
         resources {
@@ -48,6 +67,9 @@ android {
 }
 
 dependencies {
+    // native 音频核心：Oboe（prefab 静态库，链接进 libmicup_audio.so）
+    implementation("com.google.oboe:oboe:1.9.0")
+
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
