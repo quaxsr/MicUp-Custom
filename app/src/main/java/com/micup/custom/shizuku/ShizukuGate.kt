@@ -85,12 +85,13 @@ object ShizukuGate {
      */
     fun isMiuiLikeDevice(): Boolean {
         if (Build.MANUFACTURER?.equals("Xiaomi", ignoreCase = true) == true) return true
-        return runCatching {
-            val prop = Class.forName("android.os.SystemProperties")
+        // K2 兼容：规避"行尾 as? String + 下一行以 ! 起始"的解析缺陷（Kotlin 2.0.21 实测复现），改为先取值再判空
+        val prop = runCatching {
+            Class.forName("android.os.SystemProperties")
                 .getMethod("get", String::class.java)
                 .invoke(null, "ro.mi.os.version.name") as? String
-            !prop.isNullOrBlank()
-        }.getOrDefault(false)
+        }.getOrNull()
+        return !prop.isNullOrBlank()
     }
 
     /**

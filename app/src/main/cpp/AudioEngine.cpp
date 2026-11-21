@@ -47,7 +47,7 @@ public:
         JavaVMAttachArgs args{};
         args.version = JNI_VERSION_1_6;
         args.name = kCallbackThreadName;
-        if (g_vm->AttachCurrentThread(&args, &env_) == JNI_OK) attached_ = true;
+        if (g_vm->AttachCurrentThread(&env_, &args) == JNI_OK) attached_ = true;
     }
     ~ScopedJniThread() {
         if (attached_) g_vm->DetachCurrentThread();
@@ -367,15 +367,15 @@ void NativeEngine::stop() {
 bool NativeEngine::openInput(int bufferMultiplier) {
     oboe::AudioStreamBuilder builder;
     builder.setDirection(oboe::Direction::Input)
-           .setPerformanceMode(oboe::PerformanceMode::LowLatency)
+           ->setPerformanceMode(oboe::PerformanceMode::LowLatency)
            // 对应 MediaRecorder.AudioSource.VOICE_COMMUNICATION（回声消除链路，语义同 Kotlin buildMicRecord）
-           .setInputPreset(oboe::InputPreset::VoiceCommunication)
-           .setSampleRate(sampleRate_)
-           .setChannelCount(channels_)
-           .setFormat(oboe::AudioFormat::Float)
+           ->setInputPreset(oboe::InputPreset::VoiceCommunication)
+           ->setSampleRate(sampleRate_)
+           ->setChannelCount(channels_)
+           ->setFormat(oboe::AudioFormat::Float)
            // 对应 Kotlin max(minBuf, CHUNK*4 字节) * bufferMultiplier 的缓冲意图（帧数 = CHUNK * 倍数）
-           .setBufferCapacityInFrames(kChunk * std::max(bufferMultiplier, 1))
-           .setCallback(this);
+           ->setBufferCapacityInFrames(kChunk * std::max(bufferMultiplier, 1))
+           ->setCallback(this);
     oboe::Result r = builder.openStream(stream_);
     if (r != oboe::Result::OK || !stream_) {
         LOGW("Oboe 输入流创建失败: %s", oboe::convertToText(r));
@@ -401,12 +401,12 @@ void NativeEngine::reopenInput() {
         std::shared_ptr<oboe::AudioStream> s;
         oboe::AudioStreamBuilder builder;
         builder.setDirection(oboe::Direction::Input)
-               .setPerformanceMode(oboe::PerformanceMode::LowLatency)
-               .setInputPreset(oboe::InputPreset::VoiceCommunication)
-               .setSampleRate(sampleRate_)
-               .setChannelCount(channels_)
-               .setFormat(oboe::AudioFormat::Float)
-               .setCallback(this);
+               ->setPerformanceMode(oboe::PerformanceMode::LowLatency)
+               ->setInputPreset(oboe::InputPreset::VoiceCommunication)
+               ->setSampleRate(sampleRate_)
+               ->setChannelCount(channels_)
+               ->setFormat(oboe::AudioFormat::Float)
+               ->setCallback(this);
         oboe::Result r = builder.openStream(s);
         if (r == oboe::Result::OK && s) {
             r = s->requestStart();
@@ -501,13 +501,13 @@ void NativeEngine::setMonitor(bool enabled) {
         oboe::AudioStreamBuilder builder;
         builder.setDirection(oboe::Direction::Output)
                // 语义同 USAGE_ASSISTANCE_SONIFICATION：避开内录捕获范围（MEDIA/GAME/UNKNOWN）防自激
-               .setUsage(oboe::Usage::AssistanceSonification)
-               .setContentType(oboe::ContentType::Sonification)
-               .setSampleRate(sampleRate_)
-               .setChannelCount(1)
-               .setFormat(oboe::AudioFormat::Float)
+               ->setUsage(oboe::Usage::AssistanceSonification)
+               ->setContentType(oboe::ContentType::Sonification)
+               ->setSampleRate(sampleRate_)
+               ->setChannelCount(1)
+               ->setFormat(oboe::AudioFormat::Float)
                // 对应 Kotlin max(minBuf, CHUNK*4 字节)*2 字节 = CHUNK*2 帧
-               .setBufferCapacityInFrames(kChunk * 2);
+               ->setBufferCapacityInFrames(kChunk * 2);
         oboe::Result r = builder.openStream(monitor_);
         if (r != oboe::Result::OK || !monitor_) {
             LOGW("监听输出流创建失败: %s（监听关闭，采集继续）", oboe::convertToText(r));
