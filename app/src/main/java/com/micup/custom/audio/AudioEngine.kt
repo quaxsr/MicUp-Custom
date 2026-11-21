@@ -11,10 +11,12 @@ import android.os.Handler
 import android.os.Looper
 import android.os.Build
 import android.os.Process
+import android.util.Log
 import androidx.annotation.RequiresApi
 import com.micup.custom.data.CaptureSourceMode
 import com.micup.custom.data.EffectPreset
 import kotlinx.coroutines.flow.MutableStateFlow
+import java.io.IOException
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.max
@@ -85,6 +87,10 @@ class AudioEngine(
     private val chain = DspChain(SAMPLE_RATE)
     private var chunkCount = 0
 
+    /** 内录链路被系统拦截后是否已降级为标准 AudioRecord（每会话最多降级一次，防循环降级） */
+    @Volatile
+    private var downgradedToMic = false
+
     fun start(): Boolean {
         if (sourceMode != CaptureSourceMode.MICROPHONE && Build.VERSION.SDK_INT < 29) {
             EngineBus.state.value = EngineState.Error("系统内录需要 Android 10 及以上")
@@ -92,21 +98,20 @@ class AudioEngine(
         }
         EngineBus.frame.value = null
         EngineBus.state.value = EngineState.Starting
-        val ar = try {
-            buildRecord()
-        } catch (t: Throwable) {
-            EngineBus.state.value = EngineState.Error("采集初始化失败：${t.message ?: t.javaClass.simpleName}")
-            return false
-        }
-        if (ar == null || ar.state != AudioRecord.STATE_INITIALIZED) {
-            try { ar?.release() } catch (_: Throwable) {}
+        downgradedToMic = false
+        val ar = acquireRecord() ?: return false
+        if (ar.state != AudioRecord.STATE_INITIALIZED) {
+            try { ar.release() } catch (_: Throwable) {}
             EngineBus.state.value = EngineState.Error("AudioRecord 初始化失败（权限或设备被占用）")
             return false
         }
         record = ar
         chain.reset()
         running = true
-        EngineBus.state.value = EngineState.Running(sourceMode, SAMPLE_RATE)
+        // 降级事实经既有状态通道记录：以实际生效的采集源（MICROPHONE）上报
+        EngineBus.state.value =
+            if (downgradedToMic) EngineState.Running(CaptureSourceMode.MICROPHONE, SAMPLE_RATE)
+            else EngineState.Running(sourceMode, SAMPLE_RATE)
         thread = Thread({ loop() }, "MicUp-DSP").apply {
             priority = Thread.MAX_PRIORITY
             start()
@@ -123,42 +128,121 @@ class AudioEngine(
         try { t?.join(1500) } catch (_: Throwable) {}
     }
 
-    // ————— 采集源 —————
+    // ————— 采集源（含 HyperOS 拦截降级） —————
+
+    /**
+     * 构建 AudioRecord：MediaProjection 链路（capture 配置获取、AudioRecord 构建）包进 try-catch，
+     * 遇 SecurityException/IllegalStateException/IOException 等 HyperOS 拦截类失败时，
+     * 静默降级标准 AudioRecord(RECORD_AUDIO) 继续运行：不闪退、不打断服务；
+     * 降级事实经 Log 与 EngineBus.state（Running 的实际采集源）记录；
+     * 致命错误（Error/OOM、麦克风模式自身失败）不被吞掉，仍走 Error 上报。
+     */
+    private fun acquireRecord(): AudioRecord? {
+        var ar: AudioRecord? = null
+        var projectionFailure: Throwable? = null
+        try {
+            ar = buildRecord()
+            if (sourceMode != CaptureSourceMode.MICROPHONE && ar != null &&
+                ar.state != AudioRecord.STATE_INITIALIZED
+            ) {
+                projectionFailure = IllegalStateException("内录 AudioRecord 初始化失败（state=${ar.state}）")
+                try { ar.release() } catch (_: Throwable) {}
+                ar = null
+            }
+        } catch (t: Throwable) {
+            if (sourceMode == CaptureSourceMode.MICROPHONE || !isRecoverableCaptureFailure(t)) {
+                EngineBus.state.value = EngineState.Error("采集初始化失败：${t.message ?: t.javaClass.simpleName}")
+                return null
+            }
+            projectionFailure = t
+        }
+        if (projectionFailure != null) {
+            Log.w(TAG, "MediaProjection 采集链路启动失败，降级标准麦克风采集继续运行", projectionFailure)
+            downgradedToMic = true
+            return try {
+                buildMicRecord()
+            } catch (t: Throwable) {
+                EngineBus.state.value = EngineState.Error("降级麦克风采集仍失败：${t.message ?: t.javaClass.simpleName}")
+                null
+            }
+        }
+        return ar
+    }
+
+    /** 读循环/重建期降级：释放当前采集、换标准 AudioRecord 继续跑，成功返回 true */
+    private fun fallbackToMicInLoop(): Boolean {
+        try { record?.release() } catch (_: Throwable) {}
+        record = null
+        return try {
+            val mic = buildMicRecord()
+            if (mic.state != AudioRecord.STATE_INITIALIZED) {
+                try { mic.release() } catch (_: Throwable) {}
+                Log.w(TAG, "降级麦克风 AudioRecord 初始化失败")
+                false
+            } else {
+                downgradedToMic = true
+                record = mic
+                EngineBus.state.value = EngineState.Running(CaptureSourceMode.MICROPHONE, SAMPLE_RATE)
+                Log.w(TAG, "已降级为标准麦克风采集继续运行")
+                true
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "降级麦克风采集失败", t)
+            false
+        }
+    }
+
+    /** HyperOS 拦截类可恢复异常；Error/OOM 等致命错误不在此列，不会被吞掉 */
+    private fun isRecoverableCaptureFailure(t: Throwable): Boolean =
+        t is SecurityException || t is IllegalStateException || t is IOException ||
+            t is UnsupportedOperationException || t is IllegalArgumentException
 
     @RequiresApi(Build.VERSION_CODES.Q)
-    private fun buildRecord(): AudioRecord? {
+    private fun buildRecord(): AudioRecord? = when (sourceMode) {
+        CaptureSourceMode.MICROPHONE -> buildMicRecord()
+        else -> buildProjectionRecord()
+    }
+
+    /** 标准 AudioRecord（RECORD_AUDIO），全 SDK 可用，也是内录被拦截时的降级通道 */
+    private fun buildMicRecord(): AudioRecord {
         val minBuf = AudioRecord.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_FLOAT)
         if (minBuf <= 0) {
             throw IllegalStateException("音频设备不支持当前采样配置")
         }
         val bufBytes = max(minBuf, CHUNK * 4) * EngineBus.params.value.bufferMultiplier
-        return when (sourceMode) {
-            CaptureSourceMode.MICROPHONE -> AudioRecord(
-                MediaRecorder.AudioSource.VOICE_COMMUNICATION,
-                SAMPLE_RATE,
-                AudioFormat.CHANNEL_IN_MONO,
-                AudioFormat.ENCODING_PCM_FLOAT,
-                bufBytes
-            )
-            else -> {
-                val mp = projection ?: throw IllegalStateException("未取得系统投屏授权")
-                val config = AudioPlaybackCaptureConfiguration.Builder(mp)
-                    .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
-                    .addMatchingUsage(AudioAttributes.USAGE_GAME)
-                    .addMatchingUsage(AudioAttributes.USAGE_UNKNOWN)
-                    .build()
-                val format = AudioFormat.Builder()
-                    .setEncoding(AudioFormat.ENCODING_PCM_FLOAT)
-                    .setSampleRate(SAMPLE_RATE)
-                    .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
-                    .build()
-                AudioRecord.Builder()
-                    .setAudioFormat(format)
-                    .setAudioPlaybackCaptureConfig(config)
-                    .setBufferSizeInBytes(bufBytes)
-                    .build()
-            }
+        return AudioRecord(
+            MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+            SAMPLE_RATE,
+            AudioFormat.CHANNEL_IN_MONO,
+            AudioFormat.ENCODING_PCM_FLOAT,
+            bufBytes
+        )
+    }
+
+    /** MediaProjection 内录链路（capture 配置获取 + AudioRecord 构建），需 Q+ */
+    @RequiresApi(Build.VERSION_CODES.Q)
+    private fun buildProjectionRecord(): AudioRecord {
+        val mp = projection ?: throw IllegalStateException("未取得系统投屏授权")
+        val minBuf = AudioRecord.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_FLOAT)
+        if (minBuf <= 0) {
+            throw IllegalStateException("音频设备不支持当前采样配置")
         }
+        val bufBytes = max(minBuf, CHUNK * 4) * EngineBus.params.value.bufferMultiplier
+        val config = AudioPlaybackCaptureConfiguration.Builder(mp)
+            .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
+            .addMatchingUsage(AudioAttributes.USAGE_GAME)
+            .addMatchingUsage(AudioAttributes.USAGE_UNKNOWN)
+            .build()
+        val format = AudioFormat.Builder()
+            .setEncoding(AudioFormat.ENCODING_PCM_FLOAT)
+            .setSampleRate(SAMPLE_RATE)
+            .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
+            .build()
+        return AudioRecord.Builder()
+            .setAudioFormat(format)
+            .setAudioPlaybackCaptureConfig(config)
+            .setBufferSizeInBytes(bufBytes)
+            .build()
     }
 
     // ————— 监听路由（懒创建，随开关热插拔） —————
@@ -220,6 +304,13 @@ class AudioEngine(
             val n = try {
                 rec.read(buf, 0, CHUNK, AudioRecord.READ_BLOCKING)
             } catch (t: Throwable) {
+                // 内录链路被系统中途拦截：降级标准麦克风采集，服务不中断
+                if (sourceMode != CaptureSourceMode.MICROPHONE && !downgradedToMic &&
+                    isRecoverableCaptureFailure(t) && fallbackToMicInLoop()
+                ) {
+                    consecutiveErrors = 0
+                    continue
+                }
                 exitError = "采集异常：${t.message ?: t.javaClass.simpleName}"
                 break
             }
@@ -243,10 +334,21 @@ class AudioEngine(
                     val newRec = try {
                         buildRecord()
                     } catch (t: Throwable) {
+                        if (sourceMode != CaptureSourceMode.MICROPHONE && !downgradedToMic &&
+                            isRecoverableCaptureFailure(t) && fallbackToMicInLoop()
+                        ) {
+                            consecutiveErrors = 0
+                            continue
+                        }
                         exitError = "音频设备重建失败：${t.message ?: t.javaClass.simpleName}"
                         break
                     }
                     if (newRec == null || newRec.state != AudioRecord.STATE_INITIALIZED) {
+                        try { newRec?.release() } catch (_: Throwable) {}
+                        if (sourceMode != CaptureSourceMode.MICROPHONE && !downgradedToMic && fallbackToMicInLoop()) {
+                            consecutiveErrors = 0
+                            continue
+                        }
                         exitError = "音频设备重建失败：状态异常或初始化失败"
                         break
                     }
@@ -326,6 +428,7 @@ class AudioEngine(
     }
 
     companion object {
+        private const val TAG = "MicUpAudio"
         const val SAMPLE_RATE = 48000
         const val CHUNK = 1024
         const val FFT_SIZE = 1024

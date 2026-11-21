@@ -11,10 +11,14 @@ import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
+import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.PowerManager
+import android.provider.Settings
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.micup.custom.MainActivity
@@ -23,6 +27,7 @@ import com.micup.custom.audio.AudioEngine
 import com.micup.custom.audio.EngineBus
 import com.micup.custom.audio.EngineState
 import com.micup.custom.data.CaptureSourceMode
+import java.io.IOException
 
 /**
  * 前台采集服务：持有 MediaProjection 与引擎。
@@ -84,6 +89,9 @@ class CaptureService : Service() {
             else -> startForeground(NOTIF_ID, buildNotification())
         }
 
+        // 电池优化白名单引导：异步执行，不阻塞采集启动主流程；每进程最多引导一次
+        maybeRequestBatteryWhitelist()
+
         try {
             val mp = if (mode == CaptureSourceMode.MICROPHONE) {
                 null
@@ -104,10 +112,60 @@ class CaptureService : Service() {
             this.engine = engine
             if (!engine.start()) shutdown()
         } catch (t: Throwable) {
-            EngineBus.state.value = EngineState.Error("启动失败：${t.message ?: t.javaClass.simpleName}")
-            shutdown()
+            val canFallback = mode != CaptureSourceMode.MICROPHONE &&
+                !intent.getBooleanExtra(EXTRA_MIC_FALLBACK, false) &&
+                isRecoverableCaptureFailure(t)
+            if (canFallback) {
+                // HyperOS/MIUI 拦截投屏授权等可恢复失败：静默降级标准 AudioRecord(RECORD_AUDIO)，
+                // 不闪退、不打断服务；降级事实经 Log 记录，状态经 EngineBus 既有通道上报
+                Log.w(TAG, "投屏采集链路启动失败，降级标准麦克风采集继续运行", t)
+                try { engine?.stop() } catch (_: Throwable) {}
+                engine = null
+                try { projection?.stop() } catch (_: Throwable) {}
+                projection = null
+                handleStart(
+                    Intent(intent)
+                        .setAction(ACTION_START)
+                        .putExtra(EXTRA_MODE, CaptureSourceMode.MICROPHONE.name)
+                        .putExtra(EXTRA_MIC_FALLBACK, true)
+                )
+            } else {
+                EngineBus.state.value = EngineState.Error("启动失败：${t.message ?: t.javaClass.simpleName}")
+                shutdown()
+            }
         }
     }
+
+    // ————— HyperOS/MIUI 兼容：电池优化白名单引导 —————
+
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    /**
+     * 未加入电池优化白名单时用 ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS 引导用户加白。
+     * post 到主线程异步执行：不阻塞采集启动；runCatching 兜底（部分 ROM 禁止后台拉起该页面）；
+     * 每进程最多引导一次，服务重启不重复弹窗。
+     */
+    private fun maybeRequestBatteryWhitelist() {
+        if (batteryWhitelistRequested) return
+        batteryWhitelistRequested = true
+        mainHandler.post {
+            runCatching {
+                val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+                if (!pm.isIgnoringBatteryOptimizations(packageName)) {
+                    startActivity(
+                        Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+                            .setData(Uri.parse("package:$packageName"))
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    )
+                }
+            }.onFailure { Log.w(TAG, "电池优化白名单引导失败（可能被 ROM 拦截）", it) }
+        }
+    }
+
+    /** HyperOS 拦截类可恢复异常，可降级继续运行；Error/OOM 等致命错误不在此列，仍走上报 */
+    private fun isRecoverableCaptureFailure(t: Throwable): Boolean =
+        t is SecurityException || t is IllegalStateException || t is IOException ||
+            t is UnsupportedOperationException || t is IllegalArgumentException
 
     private fun shutdown() {
         if (shuttingDown) return
@@ -176,5 +234,11 @@ class CaptureService : Service() {
         const val EXTRA_PROJECTION = "extra_projection"
         private const val CHANNEL_ID = "micup_capture"
         private const val NOTIF_ID = 1001
+        private const val EXTRA_MIC_FALLBACK = "extra_mic_fallback"
+        private const val TAG = "CaptureService"
+
+        /** 每进程只引导一次电池优化白名单（服务重启不重复弹窗） */
+        @Volatile
+        private var batteryWhitelistRequested = false
     }
 }
